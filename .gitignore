@@ -1,0 +1,19 @@
+# 电子书文件（受版权保护，不入库）
+*.mobi
+*.prc
+*.azw3
+*.epub
+*.kf8
+
+# 测试与依赖产物
+node_modules/
+package.json
+package-lock.json
+scripts/.e2e-*.png
+
+# 个人文档（不入库）
+ReadMe.txt
+
+# 系统杂项
+Thumbs.db
+.DS_Store

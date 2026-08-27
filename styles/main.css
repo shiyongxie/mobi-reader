@@ -1,0 +1,335 @@
+/* main.css —— 全局壳层样式：书架、工具栏、侧栏、弹窗、Toast、TTS 控制条
+   阅读区排版样式见 reader.css */
+
+:root {
+  --primary: #4f46e5;
+  --text: #26282c;
+  --bg: #f6f7f9;
+  --panel-bg: #ffffff;
+  --border: #e3e5e8;
+}
+
+/* 全局主题（body[data-theme]）：影响周边界面；阅读区主题在 reader.css */
+body[data-theme="dark"] {
+  --text: #d8d8d8; --bg: #16181c; --panel-bg: #20242b; --border: #34383f;
+}
+body[data-theme="sepia"] { --bg: #f4ecd8; --panel-bg: #efe4cc; }
+body[data-theme="green"] { --bg: #cce8cf; --panel-bg: #bfdcc3; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;               /* 由内部容器负责滚动 */
+}
+
+.hidden { display: none !important; }
+
+/* ------------------------------ 按钮 ------------------------------ */
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: filter .15s, transform .05s;
+}
+.btn:hover { filter: brightness(.96); }
+.btn:active { transform: scale(.97); }
+.btn.primary {
+  background: var(--primary); color: #fff; border-color: var(--primary);
+}
+.btn.danger { color: #d33; }
+
+/* ============================== 书架视图 ============================== */
+
+#view-shelf { height: 100%; display: flex; flex-direction: column; }
+
+.shelf-header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 22px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+}
+.shelf-header h1 { font-size: 20px; flex: 1; display: flex; align-items: center; gap: 10px; }
+.shelf-header .logo { width: 26px; height: 26px; }
+
+.shelf-body { flex: 1; overflow-y: auto; padding: 24px; }
+
+.empty-tip {
+  text-align: center; color: #888; margin-top: 18vh; line-height: 2.2; font-size: 15px;
+}
+
+.book-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 22px; max-width: 1080px;
+}
+
+.book-card {
+  position: relative; cursor: pointer;
+  border-radius: 10px; overflow: hidden;
+  background: var(--panel-bg);
+  box-shadow: 0 2px 10px rgba(0,0,0,.07);
+  transition: transform .15s, box-shadow .15s;
+}
+.book-card:hover { transform: translateY(-3px); box-shadow: 0 6px 18px rgba(0,0,0,.13); }
+
+.book-cover {
+  aspect-ratio: 3 / 4;
+  background: linear-gradient(135deg, #8ea8ff, #4f46e5);
+  color: #fff; font-size: 44px; display: flex; align-items: center; justify-content: center;
+}
+.book-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.book-cover.no-cover { letter-spacing: 0; }
+
+.book-meta { padding: 10px 12px; }
+.book-title {
+  font-size: 14px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.book-author { font-size: 12px; color: #777; margin-top: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-time { font-size: 11px; color: #aaa; margin-top: 4px; }
+
+.book-del {
+  position: absolute; top: 6px; right: 6px;
+  width: 26px; height: 26px; border: none; border-radius: 50%;
+  background: rgba(0,0,0,.45); color: #fff; cursor: pointer; opacity: 0;
+  transition: opacity .15s; font-size: 13px;
+}
+.book-card:hover .book-del { opacity: 1; }
+
+/* 导入进度条 */
+.import-progress {
+  padding: 10px 22px; background: var(--panel-bg);
+  border-top: 2px solid var(--primary); font-size: 13px;
+}
+.bar-track { height: 6px; background: #ddd; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.bar-fill { height: 100%; width: 0; background: var(--primary); transition: width .25s; }
+
+/* 拖拽遮罩 */
+.drop-hint {
+  position: fixed; inset: 0; z-index: 900;
+  background: rgba(79, 70, 229, .15);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px; color: var(--primary); font-weight: 700;
+  pointer-events: none;              /* 不拦截 drop 事件 */
+  border: 4px dashed var(--primary);
+}
+
+/* ============================= 阅读器外壳 ============================= */
+
+#view-reader { height: 100%; display: flex; flex-direction: column; }
+
+.reader-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 30;
+}
+.tb-btn {
+  border: none; background: transparent; color: var(--text);
+  padding: 7px 10px; border-radius: 8px; font-size: 14px; cursor: pointer;
+  white-space: nowrap;
+}
+.tb-btn:hover { background: rgba(127,127,127,.14); }
+
+.rt-title {
+  flex: 1; text-align: center; font-size: 15px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;                       /* 允许 flex 收缩以触发 ellipsis */
+}
+
+.reader-body { flex: 1; position: relative; min-height: 0; }
+
+/* ------------------------------ 侧边面板 ------------------------------ */
+
+.side-panel {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 300px; max-width: 85vw;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 14px rgba(0,0,0,.08);
+  transform: translateX(-102%);       /* 默认收起 */
+  transition: transform .22s ease;
+  z-index: 40;
+  display: flex; flex-direction: column;
+  padding: 16px;
+}
+.side-panel.show { transform: translateX(0); }
+.side-panel h2 { font-size: 16px; margin-bottom: 12px; }
+.side-panel small { color: #999; font-weight: normal; }
+
+.panel-foot { padding-top: 10px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; }
+
+#toc-list { list-style: none; overflow-y: auto; flex: 1; }
+.toc-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
+  line-height: 1.4; }
+.toc-item:hover { background: rgba(127,127,127,.12); }
+.toc-item.current { background: rgba(79,70,229,.12); color: var(--primary); font-weight: 600; }
+.toc-item.lvl-2 { padding-left: 26px; font-size: 13.5px; }
+.toc-item.lvl-3 { padding-left: 42px; font-size: 13px; color: #666; }
+
+#anno-list { list-style: none; overflow-y: auto; flex: 1; }
+.anno-item {
+  display: flex; gap: 8px; padding: 10px 8px; border-bottom: 1px solid var(--border);
+  cursor: pointer; border-radius: 8px;
+}
+.anno-item:hover { background: rgba(127,127,127,.1); }
+.anno-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; flex: none;
+  border: 1px solid rgba(0,0,0,.2); }
+.anno-quote { font-size: 13px; line-height: 1.5; }
+.anno-note { font-size: 12.5px; color: var(--primary); margin-top: 4px; }
+.anno-time { font-size: 11px; color: #aaa; margin-top: 4px; }
+.anno-empty { color: #999; font-size: 13px; line-height: 1.8; padding: 20px 6px; }
+
+/* 设置面板控件 */
+.set-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px;
+  margin-bottom: 16px; }
+.set-row input[type="range"] { flex: 1; accent-color: var(--primary); }
+.set-row b { min-width: 44px; text-align: right; font-weight: 600; }
+
+.set-group { margin-bottom: 18px; font-size: 13.5px; }
+.set-group > div { margin-top: 8px; }
+.set-hint { font-size: 11.5px; color: #999; margin-top: 8px; line-height: 1.5; }
+
+.swatch-group { display: flex; gap: 10px; }
+.theme-dot {
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; outline: 1px solid rgba(0,0,0,.15);
+}
+.theme-dot.active { border-color: var(--primary); }
+.th-light { background: #ffffff; } .th-sepia { background: #f4ecd8; }
+.th-green { background: #c7edcc; } .th-dark  { background: #17191d; }
+
+.seg-group { display: flex; gap: 8px; }
+.seg-group .btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* --------------------------- 选区浮动工具栏 --------------------------- */
+
+#sel-toolbar {
+  position: fixed; z-index: 200;
+  display: flex; gap: 2px;
+  background: #23262c; color: #fff;
+  border-radius: 10px; padding: 4px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.3);
+}
+#sel-toolbar button {
+  border: none; background: transparent; color: #fff;
+  font-size: 13px; padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  white-space: nowrap;
+}
+#sel-toolbar button:hover { background: rgba(255,255,255,.15); }
+
+/* ------------------------------ TTS 控制条 ------------------------------ */
+
+#tts-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 150;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px rgba(0,0,0,.09);
+}
+#tts-bar button {
+  border: none; background: transparent; font-size: 17px; cursor: pointer;
+  color: var(--text); padding: 4px 8px; border-radius: 6px;
+}
+#tts-bar button:hover { background: rgba(127,127,127,.15); }
+.tts-info { font-size: 12px; color: #888; min-width: 90px; }
+.tts-rate { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.tts-rate input { width: 110px; accent-color: var(--primary); }
+#tts-voice { max-width: 190px; font-size: 12.5px; padding: 4px; }
+
+/* 高亮贴片（TTS 用）：绝对定位在覆盖层上 */
+#tts-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
+.tts-patch { position: absolute; border-radius: 2px; mix-blend-mode: multiply; }
+body[data-theme="dark"] .tts-patch { mix-blend-mode: screen; opacity: .55; }
+.tts-sentence { background: rgba(120, 170, 255, .35); }
+.tts-word     { background: rgba(255, 213, 79, .85); }
+
+/* CSS Custom Highlight（首选高亮通道，Chrome/Firefox 现代版支持）：
+   句子层用双层 text-shadow 做"加粗观感"。刻意不用 font-weight ——
+   真加粗会改变字形前进宽度，朗读时阅读区版面会持续跳动；
+   阴影描边只增粗笔画、宽度零变化，行位置纹丝不动。
+   currentColor 让四种主题下都自动取正文色，夜间模式同样清晰。 */
+::highlight(tts-sentence) {
+  text-shadow: 0 0 .55px currentColor, 0 0 .55px currentColor, 0 0 .9px currentColor;
+  background-color: rgba(120, 170, 255, .18);
+}
+::highlight(tts-word) { color: #d6334a; }
+body[data-theme="dark"] ::highlight(tts-word) { color: #ff8a9b; }
+
+/* ------------------------------ 模态弹窗 ------------------------------ */
+
+#modal-mask {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(0,0,0,.42);
+  display: flex; align-items: center; justify-content: center;
+}
+#modal-box {
+  width: min(430px, 92vw);
+  background: var(--panel-bg);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.28);
+}
+#modal-box h3 { font-size: 16px; margin-bottom: 12px; }
+.modal-quote {
+  font-size: 13px; color: #777; background: rgba(127,127,127,.1);
+  border-left: 3px solid var(--primary);
+  padding: 8px 12px; margin-bottom: 10px; line-height: 1.6;
+  max-height: 130px; overflow-y: auto;
+}
+#modal-note {
+  width: 100%; resize: vertical; min-height: 80px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font: inherit; font-size: 14px; background: transparent; color: inherit;
+}
+.color-row { display: flex; gap: 8px; margin: 12px 0; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; outline: 1px solid rgba(0,0,0,.15); }
+.swatch.active { border-color: var(--primary); }
+.sw-yellow { background: #ffe066; } .sw-green { background: #a9e8b7; }
+.sw-blue { background: #a5cdff; }  .sw-pink  { background: #ffb3cf; }
+
+.modal-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ------------------------------- Toast ------------------------------- */
+
+#ui-toast {
+  position: fixed; bottom: 72px; left: 50%;
+  transform: translateX(-50%) translateY(14px);
+  background: rgba(30,32,36,.92); color: #fff;
+  padding: 9px 18px; border-radius: 20px;
+  font-size: 13.5px; z-index: 400;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s;
+  max-width: 86vw;
+}
+#ui-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ------------------------------ 移动端适配 ------------------------------ */
+
+@media (max-width: 720px) {
+  .shelf-body { padding: 14px; }
+  .book-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 14px; }
+
+  .reader-toolbar { gap: 2px; padding: 6px; }
+  .tb-btn { font-size: 13px; padding: 6px 8px; }
+  /* 标题隐藏，腾出空间 */
+  .rt-title { display: none; }
+
+  .side-panel { box-shadow: none; }
+  #tts-voice { max-width: 120px; }
+  .tts-info { display: none; }
+}

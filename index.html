@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 移动端适配：禁用缩放抖动，阅读场景更稳 -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+  <meta name="theme-color" content="#4f46e5">
+  <title>Mobi Reader · 个人 MOBI 阅读器</title>
+  <!-- 注意：manifest.json 由 js/app.js 在 http(s) 环境下动态注入；
+       file:// 直接引用会立即触发浏览器的 CORS 请求报错，故不放这里 -->
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/reader.css">
+</head>
+<body data-theme="light">
+
+  <!-- ============================== 书架视图 ============================== -->
+  <div id="view-shelf">
+    <header class="shelf-header">
+      <h1><img src="assets/icon.svg" alt="" class="logo">我的书架</h1>
+      <button id="btn-import" class="btn primary">＋ 导入 MOBI</button>
+      <input type="file" id="file-input" accept=".mobi,.prc,application/x-mobipocket-ebook"
+             multiple hidden>
+    </header>
+
+    <main class="shelf-body">
+      <p id="empty-tip" class="empty-tip hidden">
+        📚 书架还是空的。<br>
+        点击右上角「导入 MOBI」，或把 .mobi 文件拖进窗口。
+      </p>
+      <div id="book-grid" class="book-grid"></div>
+    </main>
+
+    <!-- 导入进度条 -->
+    <div id="import-progress" class="import-progress hidden">
+      <span id="import-text">准备导入…</span>
+      <div class="bar-track"><div id="import-bar" class="bar-fill"></div></div>
+    </div>
+
+    <!-- 拖拽提示遮罩 -->
+    <div id="drop-hint" class="drop-hint hidden">
+      <div>📥 松开鼠标，导入 MOBI 文件</div>
+    </div>
+  </div>
+
+  <!-- ============================= 阅读器视图 ============================= -->
+  <div id="view-reader" class="hidden">
+
+    <header class="reader-toolbar">
+      <button id="btn-back" class="tb-btn" title="返回书架">← 书架</button>
+      <button id="btn-toc" class="tb-btn" title="目录">☰ 目录</button>
+      <span id="reader-title" class="rt-title"></span>
+      <button id="btn-anno-list" class="tb-btn" title="标注列表">🗒 标注</button>
+      <button id="btn-tts-toggle" class="tb-btn" title="开始朗读">▶ 朗读</button>
+      <button id="btn-settings" class="tb-btn" title="设置">⚙ 设置</button>
+    </header>
+
+    <div class="reader-body">
+
+      <!-- 目录侧栏 -->
+      <aside id="panel-toc" class="side-panel">
+        <h2>目录</h2>
+        <ul id="toc-list"></ul>
+      </aside>
+
+      <!-- 标注侧栏 -->
+      <aside id="panel-annos" class="side-panel">
+        <h2>标注 <small id="anno-count"></small></h2>
+        <ul id="anno-list"></ul>
+        <div class="panel-foot">
+          <button id="btn-anno-export" class="btn">导出 JSON</button>
+          <button id="btn-anno-import" class="btn">导入 JSON</button>
+          <input type="file" id="anno-import-file" accept=".json" hidden>
+        </div>
+      </aside>
+
+      <!-- 设置侧栏 -->
+      <aside id="panel-settings" class="side-panel">
+        <h2>阅读设置</h2>
+
+        <label class="set-row">
+          字体大小
+          <input type="range" id="set-font-size" min="13" max="30" step="1">
+          <b id="set-font-size-val"></b>
+        </label>
+
+        <label class="set-row">
+          行距
+          <input type="range" id="set-line-height" min="1.4" max="2.4" step="0.05">
+          <b id="set-line-height-val"></b>
+        </label>
+
+        <div class="set-group">
+          背景主题（护眼色）
+          <div class="swatch-group">
+            <button class="theme-dot th-light"  data-theme-btn="light"  title="白天"></button>
+            <button class="theme-dot th-sepia"  data-theme-btn="sepia"  title="米黄"></button>
+            <button class="theme-dot th-green"  data-theme-btn="green"  title="护眼绿"></button>
+            <button class="theme-dot th-dark"   data-theme-btn="dark"   title="夜间"></button>
+          </div>
+        </div>
+
+        <div class="set-group">
+          字体家族
+          <div class="seg-group">
+            <button class="btn" data-font-btn="serif">衬线 · 宋</button>
+            <button class="btn" data-font-btn="sans">无衬线 · 黑</button>
+          </div>
+        </div>
+
+        <div class="set-group">
+          阅读模式
+          <div class="seg-group">
+            <button class="btn" data-mode-btn="scroll">滚动</button>
+            <button class="btn" data-mode-btn="page">分页</button>
+          </div>
+          <p class="set-hint">分页模式下可用 ← → 键或屏幕两侧按钮翻页。</p>
+        </div>
+      </aside>
+
+      <!-- 正文区 -->
+      <main id="reader-main">
+        <div id="reader-scroll">
+          <article id="reader-content"></article>
+        </div>
+
+        <!-- 分页模式的翻页按钮与页码 -->
+        <div class="page-nav page-left" id="page-prev">‹</div>
+        <div class="page-nav page-right" id="page-next">›</div>
+        <div id="page-pos" class="page-pos"></div>
+      </main>
+    </div>
+
+    <!-- 朗读控制条 -->
+    <div id="tts-bar" class="hidden">
+      <button id="btn-tts-prev" title="上一句">⏮</button>
+      <button id="bar-play"    title="播放 / 暂停">⏯</button>
+      <button id="btn-tts-next" title="下一句">⏭</button>
+      <button id="btn-tts-stop" title="停止">⏹</button>
+      <span id="tts-info" class="tts-info"></span>
+      <label class="tts-rate">语速
+        <input type="range" id="tts-rate" min="0.5" max="2" step="0.25" value="1">
+        <b id="tts-rate-val">1x</b>
+      </label>
+      <select id="tts-voice" title="朗读声音"></select>
+      <button id="btn-tts-close" title="关闭朗读条">✕</button>
+    </div>
+
+    <!-- 选中文本浮动工具栏 -->
+    <div id="sel-toolbar" class="hidden">
+      <button id="sel-highlight" title="添加高亮">🖍 高亮</button>
+      <button id="sel-note" title="高亮并添加笔记">📝 笔记</button>
+      <button id="sel-copy" title="复制选中文本">📋 复制</button>
+    </div>
+  </div>
+
+  <!-- 模态弹窗（笔记编辑等） -->
+  <div id="modal-mask" class="hidden"><div id="modal-box"></div></div>
+
+  <!-- 脚本加载顺序即依赖顺序：存储 → UI → 解析 → 功能模块 → 入口 -->
+  <script src="js/storage.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/mobiParser.js"></script>
+  <script src="js/tts.js"></script>
+  <script src="js/annotations.js"></script>
+  <script src="js/reader.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+/* reader.css —— 阅读区排版：正文排版、四套主题、分页模式、高亮 mark */
+
+/* ------------------------------ 滚动容器 ------------------------------ */
+
+#reader-main { position: relative; height: 100%; min-height: 0; }
+
+#reader-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 阅读区主题（独立于周边壳层，方便实现"夜间模式全屏护眼"） */
+  background: #ffffff;
+  color: #26282c;
+  transition: background .2s, color .2s;
+}
+
+/* 四套阅读主题 */
+body[data-theme="sepia"] #reader-scroll {
+  background: #f4ecd8; color: #3b342a;
+}
+body[data-theme="green"] #reader-scroll {
+  background: #c7edcc; color: #24352a;
+}
+body[data-theme="dark"] #reader-scroll {
+  background: #17191d; color: #c9c9c9;
+}
+body[data-theme="dark"] .mobi-section img,
+body[data-theme="dark"] img[data-recindex] {
+  /* 夜间模式下降低图片亮度，避免刺眼 */
+  filter: brightness(.85) contrast(.95);
+}
+
+/* ------------------------------ 正文排版 ------------------------------ */
+
+#reader-content {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 22px 120px;
+  font-size: 18px;              /* JS 会覆盖为用户设置值 */
+  line-height: 1.8;
+  /* font-family 由 JS 设置（衬线 / 无衬线切换） */
+  word-wrap: break-word;
+}
+
+.mobi-section { margin-bottom: 56px; }
+
+/* MOBI 原始 HTML 里常见的块级元素补样式 */
+#reader-content p { margin: 0.8em 0; text-indent: 0; }
+#reader-content h1, #reader-content h2, #reader-content h3, #reader-content h4 {
+  margin: 1.4em 0 0.8em; line-height: 1.4; text-indent: 0;
+}
+#reader-content h1 { font-size: 1.55em; }
+#reader-content h2 { font-size: 1.35em; }
+#reader-content h3 { font-size: 1.18em; }
+#reader-content h4 { font-size: 1.05em; }
+#reader-content blockquote {
+  border-left: 3px solid rgba(127,127,127,.35);
+  padding-left: 14px; margin: 1em 0; color: inherit; opacity: .85;
+}
+#reader-content img {
+  max-width: 100%; height: auto; display: block; margin: 1em auto;
+  border-radius: 4px;
+}
+#reader-content a { color: var(--primary, #4f46e5); text-decoration: none; }
+#reader-content hr {
+  border: none; border-top: 1px dashed rgba(127,127,127,.35); margin: 2em 0;
+}
+#reader-content table { border-collapse: collapse; max-width: 100%; margin: 1em 0; }
+#reader-content td, #reader-content th {
+  border: 1px solid rgba(127,127,127,.3); padding: 4px 8px; font-size: .92em;
+}
+
+/* 章节之间分隔线，缓解长文压迫感 */
+.mobi-section + .mobi-section::before {
+  content: "";
+  display: block; width: 30%; margin: 40px auto 44px;
+  border-top: 1px dashed rgba(127,127,127,.25);
+}
+
+/* ------------------------------- 标注样式 ------------------------------- */
+
+mark[data-anno-id] {
+  color: inherit;
+  padding: 1px 0;
+  border-radius: 2px;
+  cursor: pointer;
+  box-decoration-break: clone;   /* 跨行跨列时每一行都带背景 */
+  -webkit-box-decoration-break: clone;
+}
+mark.hl-yellow { background: rgba(255, 214, 66, .55); }
+mark.hl-green  { background: rgba(122, 217, 137, .45); }
+mark.hl-blue   { background: rgba(112, 176, 255, .45); }
+mark.hl-pink   { background: rgba(255, 128, 178, .42); }
+
+/* 跳转定位时的闪烁提醒 */
+@keyframes hl-flash {
+  0%   { outline: 2px solid transparent; }
+  35%  { outline: 2px solid var(--primary, #4f46e5); background: #ffd94d; }
+  100% { outline: 2px solid transparent; }
+}
+mark.flash { animation: hl-flash 1.6s ease; }
+
+/* ------------------------------ 分页模式 ------------------------------ */
+
+/* JS 在进入分页模式时为内容设置 column-width = 视口宽、显式 height，
+   这里负责禁用纵向滚动、启用横向翻页。 */
+#reader-scroll.paged {
+  overflow-y: hidden;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+}
+#reader-scroll.paged #reader-content {
+  max-width: none;
+  padding-bottom: 28px;
+  column-fill: auto;             /* 先填满一列再排下一列 */
+  break-inside: avoid-column;
+}
+
+/* 仅在分页模式显示的翻页热区/页码 */
+.page-nav, .page-pos { display: none; }
+
+body.is-paged .page-nav {
+  display: flex; align-items: center; justify-content: center;
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 72px;
+  font-size: 34px; color: #999;
+  cursor: pointer; user-select: none; z-index: 25;
+  border-radius: 10px;
+}
+body.is-paged .page-nav:hover { background: rgba(127,127,127,.15); color: inherit; }
+body.is-paged .page-left  { left: 2px; }
+body.is-paged .page-right { right: 2px; }
+
+body.is-paged .page-pos {
+  display: block;
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  font-size: 12px; color: #888; z-index: 25;
+  background: rgba(127,127,127,.08);
+  padding: 2px 12px; border-radius: 10px;
+}
+
+/* TTS 高亮贴片覆盖层挂在 reader-main 上，分页时同样有效 */
+
+/* ------------------------------ 打印隐藏 UI ------------------------------ */
+
+@media print {
+  .reader-toolbar, .side-panel, #tts-bar, #sel-toolbar, .page-nav { display: none !important; }
+}
