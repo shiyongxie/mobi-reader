@@ -18,6 +18,10 @@
  *     跳动；不支持 highlight 的浏览器退回背景色贴片。
  *  3. 词级边界：监听 utterance.onboundary，charIndex 映射回全局
  *     偏移定位当前词；不触发时自动只剩句子层。
+ *  4. 移动端兜底：不少手机引擎（iOS 部分声音、国产 WebView、
+ *     部分安卓系统 TTS）完全不触发 onboundary —— 此时高亮会纹丝
+ *     不动。因此开播时先同步句层高亮到本块起点，并在收不到边界
+ *     事件时按「累计朗读时长 × 每秒字数估算」推进句子高亮。
  */
 'use strict';
 
@@ -423,21 +427,56 @@ const TTS = (() => {
     if (voice) { u.voice = voice; u.lang = voice.lang; }
     else u.lang = 'zh-CN';
 
+    // —— 无边界事件兜底（移动端部分引擎不触发 onboundary）——
+    let boundaryFired = false;    // 该 utterance 是否收到过边界事件
+    let fallbackTimer = null;     // 估算推进句高亮的定时器
+    let spokenMs = 0;             // 累计朗读毫秒数（暂停时不累计）
+    let lastTick = 0;
+
+    // 每秒朗读字数估算：中文引擎约 4~5 字/秒，英文约 14 字/秒
+    const cps = (() => {
+      const text = plainText.slice(st, en);
+      let cjk = 0;
+      for (const ch of text) if (/[㐀-鶿一-鿿]/.test(ch)) cjk++;
+      return (cjk / text.length > 0.3 ? 4.5 : 14) * cfg.rate;
+    })();
+
+    function stopFallback() {
+      boundaryFired = true;
+      if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+    }
+
     // 开播成功：解除引擎不可用的快速失败判定
     u.onstart = () => {
       if (state === 'stopped') return;
       everSpoke = true;
       errBeforeStart = 0;
+      // 立刻点亮本块第一句：即使引擎从不触发边界事件，句子层高亮
+      // 也至少从开播这一刻起可见
+      if (!boundaryFired) syncSentenceTo(st);
+      // 边界兜底：迟迟无 onboundary 时按时间估算推进句层高亮
+      lastTick = performance.now();
+      fallbackTimer = setInterval(() => {
+        const now = performance.now();
+        if (boundaryFired || state !== 'playing') { lastTick = now; return; }
+        spokenMs += now - lastTick;
+        lastTick = now;
+        if (spokenMs < 800) return;          // 给边界事件一点时间
+        const est = Math.min(st + Math.floor(spokenMs / 1000 * cps), en - 1);
+        syncSentenceTo(est);
+      }, 200);
     };
 
     // 边界回调同时驱动句层与词层高亮（charIndex 相对 utterance 起点）
     u.onboundary = e => {
       if (state !== 'playing') return;
+      stopFallback();
       if (e.name === 'sentence') { syncSentenceTo(st + e.charIndex); return; }
       if (e.name === 'word' || e.name == null) syncWordTo(st + e.charIndex);
     };
 
     const finishUp = () => {
+      stopFallback();
       enqueued.delete(ci);
       enqueued.delete('e' + ci);
       if (state !== 'playing') return;
@@ -448,6 +487,7 @@ const TTS = (() => {
     };
     u.onend = finishUp;
     u.onerror = ev => {
+      stopFallback();
       // interrupted/canceled 属于正常停止流程，忽略
       if (ev.error === 'interrupted' || ev.error === 'canceled') return;
       console.warn('朗读出错:', ev.error);
