@@ -76,8 +76,9 @@ mobi-reader/
 │   ├── verify-real-file.mjs    # 真实 .mobi 全链路验证：node scripts/verify-real-file.mjs [文件]
 │   ├── make-icons.mjs          # 从 icon.svg 生成 PNG 图标（零依赖光栅化器）
 │   ├── e2e-chrome.mjs          # 真实 Chrome(file://) MOBI 端到端测试
-│   └── e2e-share.mjs           # 真实 Chrome(http://) EPUB 导入 + 分享直达端到端测试
-│                               #   以上两个 e2e 需临时 `npm i --no-save puppeteer-core`
+│   ├── e2e-share.mjs           # 真实 Chrome(http://) EPUB 导入 + 分享直达端到端测试
+│   └── smoke-live.mjs          # 对**线上部署**冒烟：node scripts/smoke-live.mjs
+│                               #   以上三个需临时 `npm i --no-save puppeteer-core`
 ├── manifest.json           # PWA 清单（含 share_target 分享目标）
 └── sw.js                   # Service Worker：应用壳缓存 + 分享 POST 接收
 ```
