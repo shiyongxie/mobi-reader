@@ -6,10 +6,16 @@
   <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
   <meta name="theme-color" content="#4f46e5">
-  <title>Mobi Reader · 个人 MOBI 阅读器</title>
-  <!-- 注意：manifest.json 由 js/app.js 在 http(s) 环境下动态注入；
-       file:// 直接引用会立即触发浏览器的 CORS 请求报错，故不放这里 -->
+  <title>Mobi Reader · 本地电子书阅读器</title>
+  <!-- manifest 静态写死在这里，而不是由 js/app.js 动态注入：
+       安卓「分享直达」(share_target) 的注册信息取自**安装时的 manifest**，
+       而 app.js 的注入要等 DOMContentLoaded，时机偏晚；更麻烦的是它失败时
+       完全静默 —— 应用就是不出现在系统分享面板里，页面侧没有任何线索。
+       代价：file:// 直接打开会多一行 manifest 拉取失败的 CORS 报错（纯噪音，
+       不影响任何功能）。实际部署走 HTTPS 时这行噪音并不出现。 -->
+  <link rel="manifest" href="manifest.json">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/reader.css">
 </head>
@@ -19,16 +25,19 @@
   <div id="view-shelf">
     <header class="shelf-header">
       <h1><img src="assets/icon.svg" alt="" class="logo">我的书架</h1>
-      <button id="btn-import" class="btn primary">＋ 导入 MOBI</button>
-      <input type="file" id="file-input" accept=".mobi,.prc,application/x-mobipocket-ebook"
+      <button id="btn-import" class="btn primary">＋ 导入电子书</button>
+      <input type="file" id="file-input"
+             accept=".mobi,.prc,.epub,application/x-mobipocket-ebook,application/epub+zip"
              multiple hidden>
     </header>
 
     <main class="shelf-body">
       <p id="empty-tip" class="empty-tip hidden">
         📚 书架还是空的。<br>
-        点击右上角「导入 MOBI」，或把 .mobi 文件拖进窗口。
+        点击右上角「导入电子书」，或把 .mobi / .epub 文件拖进窗口。
       </p>
+      <!-- 分享直达的能力提示（仅 HTTPS + 安卓出现在这里，见 app.js） -->
+      <p id="share-tip" class="empty-tip hidden"></p>
       <div id="book-grid" class="book-grid"></div>
     </main>
 
@@ -40,7 +49,7 @@
 
     <!-- 拖拽提示遮罩 -->
     <div id="drop-hint" class="drop-hint hidden">
-      <div>📥 松开鼠标，导入 MOBI 文件</div>
+      <div>📥 松开鼠标，导入电子书文件</div>
     </div>
   </div>
 
@@ -185,6 +194,7 @@
 
   <!-- 脚本加载顺序即依赖顺序：存储 → UI → 解析 → 功能模块 → 入口 -->
   <script src="js/storage.js"></script>
+  <script src="js/shareInbox.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/mobiParser.js"></script>
   <script src="js/tts.js"></script>

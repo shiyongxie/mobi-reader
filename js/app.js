@@ -34,19 +34,93 @@ const App = (() => {
     bindDragDrop();
     Reader.init();
     registerPWA();
+    renderShareTip();
 
     // 首屏渲染书架
     renderShelf();
+
+    // 消费安卓分享进来的文件。必须在 renderShelf 之后：导入成功会自己
+    // 再刷一次书架，放前面会被这次首屏渲染覆盖掉
+    consumeSharedFiles();
+  }
+
+  /* ---------------------------- 安卓分享直达 ---------------------------- */
+
+  /**
+   * 消费 SW 转存到收件箱的分享文件。
+   *
+   * 时序：分享面板 → POST → SW 存收件箱（等事务提交完）→ 303 到
+   * index.html?share=<id> → 页面在这里取出并交给既有的 importFiles()。
+   */
+  async function consumeSharedFiles() {
+    const m = /[?&]share=([^&]*)/.exec(location.search);
+    if (!m) return;
+    const raw = decodeURIComponent(m[1]);
+
+    // 立刻清掉查询串：即使后面导入失败、或用户刷新，也不会重复触发
+    history.replaceState(null, '', location.pathname + location.hash);
+
+    if (raw === 'empty') { ui.toast('分享内容里没有可导入的电子书文件'); return; }
+    if (raw === 'error') {
+      ui.toast('接收分享失败，请改用「导入电子书」按钮选择文件', 6000);
+      return;
+    }
+    if (typeof SharedInbox === 'undefined') return;
+
+    try {
+      const row = await SharedInbox.take(raw);   // 原子读+删，只会被消费一次
+      if (!row || !row.files || !row.files.length) return;  // 已被消费或已清理
+      // 必须重建 File 而不是直接用 blob：书籍 ID 与缓存命中都依赖 file.name，
+      // 用原名重建，分享导入与手动导入同一本书才能命中同一条缓存
+      const files = row.files.map(f => new File([f.blob], f.name || 'shared.epub',
+        { type: f.type || '' }));
+      await importFiles(files);
+    } catch (err) {
+      console.error('[分享导入失败]', err);
+      ui.toast('分享导入失败：' + err.message, 6000);
+    } finally {
+      SharedInbox.purge().catch(() => { /* 清理失败无所谓 */ });
+    }
+  }
+
+  /**
+   * 在书架空态下方给一句「怎么用分享直达」的提示。
+   * 只在 HTTPS 下出现（http/file:// 连 SW 都没有，提示了也做不到）；
+   * 已经装到主屏的话功能本来就可用，不用再提示。
+   */
+  function renderShareTip() {
+    const tip = document.getElementById('share-tip');
+    if (!tip) return;
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+    if (location.protocol !== 'https:') return;
+
+    if (isAndroid) {
+      const installed = window.matchMedia('(display-mode: standalone)').matches ||
+        navigator.standalone === true;
+      if (installed) return;   // 已经能用，不必打扰
+      tip.textContent = '💡 把本页「添加到主屏幕」后，就能在文件管理器里长按 ' +
+        '.epub / .mobi → 分享 → 选择本应用，直接导入。';
+    } else if (isIOS) {
+      // Safari 不支持网页接收系统分享，明说，免得用户白找
+      tip.textContent = '💡 iOS 不支持把文件分享给网页应用，' +
+        '请用上方「导入电子书」从「文件」App 里选取。';
+    } else {
+      return;   // 桌面端保持界面干净
+    }
+    tip.classList.remove('hidden');
   }
 
   /* ------------------------------ 文件导入 ------------------------------ */
 
-  const ACCEPT_EXT = /\.(mobi|prc)$/i;
+  const ACCEPT_EXT = /\.(mobi|prc|epub)$/i;
+  const ACCEPT_MIME = /\.(mobi|epub)|epub\+zip|mobipocket/i;
 
   async function importFiles(files) {
-    const candidates = files.filter(f => ACCEPT_EXT.test(f.name) || /\.mobi/i.test(f.type));
+    const candidates = files.filter(f => ACCEPT_EXT.test(f.name) || ACCEPT_MIME.test(f.type));
     if (!candidates.length) {
-      ui.toast('请选择 .mobi / .prc 文件（暂不支持 AZW3/KF8）');
+      ui.toast('请选择 .mobi / .prc / .epub 文件（暂不支持 AZW3/KF8 与带 DRM 的书）');
       return;
     }
     if (importing) { ui.toast('正在导入中，请稍候'); return; }
@@ -206,14 +280,9 @@ const App = (() => {
   /* ------------------------------ PWA 注册 ------------------------------ */
 
   function registerPWA() {
-    // 仅在安全上下文（http/localhost/https）注入 PWA 组件；
-    // file:// 下既无 SW 能力，<link rel=manifest> 还会产生 CORS 报错噪音。
+    // manifest 已改为在 index.html 里静态声明（原因见那里的注释：
+    // 动态注入对 share_target 的注册不可靠，且失败时完全静默）。
     if (location.protocol === 'file:') return;
-    const link = document.createElement('link');
-    link.rel = 'manifest';
-    link.href = 'manifest.json';
-    document.head.appendChild(link);
-
     if (!('serviceWorker' in navigator)) return;
     navigator.serviceWorker.register('sw.js').catch(() => { /* file:// 等环境静默跳过 */ });
   }

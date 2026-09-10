@@ -49,7 +49,9 @@ const MobiParser = (() => {
   }
 
   async function parseOnMainThread(file, onProgress) {
-    if (typeof self.parseMOBI !== 'function') await loadScript('worker/parseWorker.js');
+    // EPUB 解析器必须在 parseWorker.js 之前就位：后者的 parseBook() 会调用它
+    if (typeof self.parseEPUB !== 'function') await loadScript('worker/epubParser.js');
+    if (typeof self.parseBook !== 'function') await loadScript('worker/parseWorker.js');
     self.__progressHook = msg => {
       if (msg.type === 'progress' && onProgress) onProgress(msg.stage, msg.pct);
     };
@@ -57,11 +59,20 @@ const MobiParser = (() => {
     await new Promise(r => setTimeout(r, 30));
     try {
       const buffer = await file.arrayBuffer();
-      return self.parseMOBI(buffer, file.name);
+      // 必须 await：parseBook 对 EPUB 返回 Promise，直接 return 会让 finally
+      // 在解析真正结束**之前**就清掉 __progressHook —— 进度条停在 3%，
+      // 且此后的 post() 会落回 self.postMessage（window 上没有这个方法）直接抛错
+      return await self.parseBook(buffer, file.name);
     } finally {
       self.__progressHook = null;
     }
   }
+
+  /* Worker 无响应多久算「环境不可用」。这不是「解析要多久」的上限，而是
+     「多久没吭声」的上限 —— 每收到一条进度消息就重新计时（见 parseInWorker）。
+     固定超时对 EPUB 是误杀：一本 24MB 的书解压 + 解析超过 5 秒很正常，
+     一旦误判就会静默丢掉 Worker、在主线程重跑一遍，UI 卡死几十秒。 */
+  const WORKER_IDLE_TIMEOUT = 8000;
 
   /** 真实 Worker 路径：返回从未 settle 过的 Promise 包装（见 runParse） */
   function parseWithWorker(file, onProgress) {
@@ -109,19 +120,35 @@ const MobiParser = (() => {
     });
   }
 
-  /** 统一入口：先走 Worker；加载失败或 5 秒无响应则切到主线程重跑一遍 */
+  /**
+   * 统一入口：先走 Worker；加载失败或「静默超时」则切到主线程重跑一遍。
+   * 超时判定是**进度感知**的：只要 Worker 还在报进度就一直续期，
+   * 只有连续 WORKER_IDLE_TIMEOUT 毫秒一声不吭才认为环境不可用。
+   */
   async function parseInWorker(file, onProgress) {
-    const workerRun = parseWithWorker(file, onProgress);
-    // 给慢路径挂空处理器，避免败方 Promise 事后拒绝触发
-    // "Unhandled promise rejection" 控制台警告
+    let timer = null;
+    let settled = false;
+    let fireTimeout;
+    const timeoutRun = new Promise((_, rej) => { fireTimeout = rej; });
+    // 给会输的那一侧挂空处理器，避免事后拒绝触发 "Unhandled promise rejection"
+    const guardTimeout = timeoutRun.catch(() => { });
+
+    const bump = () => {
+      if (settled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => fireTimeout(
+        Object.assign(new Error('worker-timeout'), { __silent: true })), WORKER_IDLE_TIMEOUT);
+    };
+
+    bump();                                   // 起跑即开始计时
+    const workerRun = parseWithWorker(file, (stage, pct) => {
+      bump();                                 // 每条进度都是「还活着」的证据
+      onProgress && onProgress(stage, pct);
+    });
     const guard = workerRun.catch(() => { });
+
     try {
-      return await Promise.race([
-        workerRun,
-        new Promise((_, rej) =>
-          setTimeout(() => rej(Object.assign(new Error('worker-timeout'), { __silent: true })),
-            5000)),
-      ]);
+      return await Promise.race([workerRun, timeoutRun]);
     } catch (err) {
       void guard;
       // 解析器的业务性错误（DRM/HUFF 等）不属于环境问题，直接抛给用户
@@ -131,6 +158,10 @@ const MobiParser = (() => {
         return parseOnMainThread(file, onProgress);
       }
       throw err;
+    } finally {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      void guardTimeout;   // 输掉的那一侧已挂空处理器，这里只是表明有意忽略
     }
   }
 

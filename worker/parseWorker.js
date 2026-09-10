@@ -14,6 +14,15 @@
  */
 'use strict';
 
+/* EPUB 解析模块与本文件共用同一个全局作用域（两者都是经典脚本，靠顶层函数
+   声明挂到 self 上）。只有 Worker 里能 importScripts；主线程降级路径由
+   mobiParser.js 用 <script> 依次加载两个文件。
+   用 try/catch 包住：加载失败不该让整个 Worker 起不来（那样连 MOBI 都读不了），
+   而是在真正要解析 EPUB 时才报错（见 parseBook）。 */
+if (typeof importScripts === 'function' && typeof parseEPUB === 'undefined') {
+  try { importScripts('epubParser.js'); } catch (e) { /* 由 parseBook 兜底报错 */ }
+}
+
 /* ============================ 二进制读取工具 ============================ */
 
 /** 读大端 u16 */
@@ -325,13 +334,45 @@ function post(msg) {
   if (typeof document === 'undefined') self.postMessage(msg); // 仅在 Worker 中才走这条路
 }
 
+/* ========================== 格式分发（EPUB / MOBI） ========================== */
+
+/**
+ * 按魔数判格式，扩展名只作兜底 —— 真实书库里改名文件很常见。
+ * ZIP 的本地文件头固定是 "PK\x03\x04"，而 EPUB 就是个 ZIP。
+ * 先判 ZIP 是因为 PDB 头前两字节是大端的记录数，理论上可能撞上 "PK"，
+ * 而 ZIP 不可能通过 MOBI 的 BOOKMOBI 校验。
+ */
+function detectFormat(u8, fileName) {
+  if (u8.length > 4 && u8[0] === 0x50 && u8[1] === 0x4b &&
+    (u8[2] === 0x03 || u8[2] === 0x05 || u8[2] === 0x07)) return 'epub';
+  if (/\.(epub|zip)$/i.test(fileName || '')) return 'epub';
+  return 'mobi';
+}
+
+/**
+ * 统一解析入口。MOBI 是同步的，EPUB 要走 DecompressionStream 因而必然异步，
+ * 所以返回值可能是 Promise —— 调用方一律 await。
+ * @returns {Promise<object>|object} 结构见 parseMOBI() 末尾
+ */
+function parseBook(buffer, fileName) {
+  if (detectFormat(new Uint8Array(buffer), fileName) === 'epub') {
+    if (typeof parseEPUB !== 'function') {
+      throw new Error('EPUB 解析模块未加载成功，请刷新页面后重试');
+    }
+    return parseEPUB(buffer, fileName);
+  }
+  return parseMOBI(buffer, fileName);
+}
+
 // 作为经典脚本被 <script> 引入时，此赋值落在 window 上（无害）；
 // 作为 Worker 时这是消息入口。
 self.onmessage = async e => {
   const { buffer, fileName } = e.data;
   try {
     post({ type: 'progress', stage: '读取结构', pct: 5 });
-    const result = parseMOBI(buffer, fileName);
+    // 必须 await：EPUB 路径返回 Promise，漏掉会让 payload 变成 Promise 对象，
+    // 经 postMessage 结构化克隆后主线程拿到一个空对象
+    const result = await parseBook(buffer, fileName);
     post({ type: 'done', payload: result });
   } catch (err) {
     post({ type: 'error', message: err && err.message ? err.message : String(err) });
