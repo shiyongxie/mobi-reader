@@ -168,6 +168,10 @@ body {
 .side-panel h2 { font-size: 16px; margin-bottom: 12px; }
 .side-panel small { color: #999; font-weight: normal; }
 
+/* 目录/标注面板靠各自的列表子元素滚动，设置面板没有这样的子元素；
+   而「朗读声音」一节展开后会超出面板高度，不给滚动就等于看不见 */
+#panel-settings { overflow-y: auto; }
+
 .panel-foot { padding-top: 10px; border-top: 1px solid var(--border);
   display: flex; gap: 8px; }
 
@@ -250,6 +254,16 @@ body {
 .tts-rate input { width: 110px; accent-color: var(--primary); }
 #tts-voice { max-width: 190px; font-size: 12.5px; padding: 4px; }
 
+/* 设置面板里的「怎么装更多语音」说明块（默认折叠） */
+#tts-voice-help {
+  font-size: 12px; color: #999; line-height: 1.7;
+  background: rgba(127,127,127,.08);
+  border-radius: 8px; padding: 10px 12px;
+}
+#tts-voice-help p { margin: 0 0 8px; }
+#tts-voice-help p:last-child { margin-bottom: 0; }
+#tts-voice-help b { color: var(--text); }
+
 /* 高亮贴片（TTS 用）：绝对定位在覆盖层上 */
 #tts-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
 .tts-patch { position: absolute; border-radius: 2px; mix-blend-mode: multiply; }
@@ -330,6 +344,10 @@ body[data-theme="dark"] ::highlight(tts-word) { color: #ff8a9b; }
   .rt-title { display: none; }
 
   .side-panel { box-shadow: none; }
-  #tts-voice { max-width: 120px; }
+  /* 声音名（如「Google 普通话（中国大陆）」）在 120px 里会被截成
+     「Google 普通…」，几个音色看上去一模一样 —— 让它吃满剩余宽度 */
+  #tts-voice { max-width: none; flex: 1 1 auto; min-width: 0; }
+  .tts-rate { flex: 0 0 auto; }
+  .tts-rate input { width: 72px; }
   .tts-info { display: none; }
 }

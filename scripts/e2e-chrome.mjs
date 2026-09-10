@@ -135,6 +135,65 @@ try {
     check('TTS 控制流程', false, e.message.split('\n')[0]);
   }
 
+  /* ---------- 朗读声音设置面板 ---------- */
+  // 无头 Chrome 的 getVoices() 几乎恒为空，列表内容与选择持久化交给
+  // scripts/test-voices.mjs（桩件驱动，零依赖）；这里只断言结构与不抛错。
+  try {
+    const errs = [];
+    page.on('pageerror', e => errs.push(e.message));
+    await page.click('#btn-settings');
+    await new Promise(r => setTimeout(r, 150));
+
+    const voiceUI = await page.evaluate(() => {
+      const sel = document.getElementById('tts-voice');
+      const pitch = document.getElementById('tts-pitch');
+      const help = document.getElementById('tts-voice-help');
+      const stat = document.getElementById('tts-voice-stat');
+      return {
+        options: sel ? sel.options.length : -1,
+        groups: sel ? sel.querySelectorAll('optgroup').length : -1,
+        stat: stat ? stat.textContent : '',
+        pitch: pitch ? { min: pitch.min, max: pitch.max } : null,
+        helpHidden: help ? help.classList.contains('hidden') : null,
+      };
+    });
+    check('声音下拉框至少有占位项（不会塌成零宽）',
+      voiceUI.options >= 1, `${voiceUI.options} 项`);
+    check('声音统计文字已填充',
+      /检测到|未检测到|正在/.test(voiceUI.stat), voiceUI.stat.trim());
+    check('音调滑杆就位（0.5–1.6）',
+      !!voiceUI.pitch && voiceUI.pitch.min === '0.5' && voiceUI.pitch.max === '1.6',
+      voiceUI.pitch ? `${voiceUI.pitch.min}–${voiceUI.pitch.max}` : '缺失');
+    check('有语音时按语言分组',
+      !hasVoices || voiceUI.groups >= 1, `optgroup ${voiceUI.groups}`);
+    check('「怎么装更多语音」默认折叠', voiceUI.helpHidden === true);
+
+    await page.click('#btn-tts-voice-help');
+    const helpShown = await page.evaluate(() =>
+      !document.getElementById('tts-voice-help').classList.contains('hidden'));
+    check('「怎么装更多语音」可展开', helpShown);
+
+    // 拖动音调：写 cfg → 落盘 → 朗读中 softRestart，全程不应抛错
+    await page.evaluate(() => {
+      const p = document.getElementById('tts-pitch');
+      p.value = '1.4';
+      p.dispatchEvent(new Event('input', { bubbles: true }));
+      p.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await new Promise(r => setTimeout(r, 300));
+    const pitchLabel = await page.evaluate(() =>
+      document.getElementById('tts-pitch-val').textContent);
+    check('音调读数跟随滑杆', pitchLabel === '1.4', pitchLabel);
+
+    await page.click('#btn-tts-refresh-voice');   // 列表为空时会走有界重试，不应抛错
+    await new Promise(r => setTimeout(r, 150));
+    check('声音面板交互无 JS 异常', errs.length === 0, errs.join(' | ').slice(0, 140));
+
+    await page.click('#btn-settings');            // 收起面板，避免影响后续刷新断言
+  } catch (e) {
+    check('朗读声音设置面板', false, e.message.split('\n')[0]);
+  }
+
   /* ---------- 刷新验证缓存与进度恢复 ---------- */
   // 先滚到中间制造一个进度
   await page.evaluate(() => {

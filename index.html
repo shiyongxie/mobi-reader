@@ -117,6 +117,30 @@
           </div>
           <p class="set-hint">分页模式下可用 ← → 键或屏幕两侧按钮翻页。</p>
         </div>
+
+        <!-- 朗读声音：语速滑杆在朗读控制条上，音调与音色诊断放这里，避免挤爆控制条 -->
+        <div class="set-group">
+          朗读声音
+          <p class="set-hint" id="tts-voice-stat">正在检测可用声音…</p>
+
+          <label class="set-row">
+            音调
+            <input type="range" id="tts-pitch" min="0.5" max="1.6" step="0.1" value="1">
+            <b id="tts-pitch-val">1</b>
+          </label>
+
+          <div class="seg-group">
+            <button class="btn" id="btn-tts-refresh-voice">🔄 刷新声音列表</button>
+            <button class="btn" id="btn-tts-voice-help">❓ 怎么装更多语音</button>
+          </div>
+
+          <div id="tts-voice-help" class="hidden">
+            <p>下拉框里的声音来自<b>系统的语音引擎</b>，网页只能列出系统里已装好的语音包。想让手机多出几个中文人声，得先去系统里安装：</p>
+            <p><b>Android</b>：设置 → 语言和输入法 → 文字转语音（TTS）输出 → 首选引擎选「Google 语音服务」→ 点它右边的齿轮 → 安装语音数据 → 中文（中国）。装完回到本页点「刷新声音列表」。</p>
+            <p><b>iOS / iPadOS</b>：设置 → 辅助功能 → 朗读内容 → 声音 → 中文 → 下载想要的声音（如「美佳」「语舒」）。回到本页刷新。</p>
+            <p><b>桌面 Chrome / Edge</b>：声音来自 Windows 系统语音。用 Microsoft Edge 打开本页还会多出一批微软在线自然语音（如「晓晓」），无需额外安装。</p>
+          </div>
+        </div>
       </aside>
 
       <!-- 正文区 -->
@@ -143,7 +167,8 @@
         <input type="range" id="tts-rate" min="0.5" max="2" step="0.25" value="1">
         <b id="tts-rate-val">1x</b>
       </label>
-      <select id="tts-voice" title="朗读声音"></select>
+      <!-- 预置占位项：声音列表尚未就绪时，select 不会塌成零宽导致控制条抖动 -->
+      <select id="tts-voice" title="朗读声音"><option value="">正在读取声音…</option></select>
       <button id="btn-tts-close" title="关闭朗读条">✕</button>
     </div>
 

@@ -41,8 +41,18 @@ const TTS = (() => {
 
   const cfg = {
     rate: 1,
+    pitch: 1,
     voiceURI: '',              // 用户选择的声音
   };
+
+  const MAX_VOICE_RETRY = 10;    // 音色列表为空时的重试次数（300ms 一次 ≈ 3 秒）
+
+  let voiceSel = null;           // #tts-voice 下拉框（模块级：刷新入口不止一处）
+  let cfgReady = null;           // 设置恢复完成的 Promise（init 期启动）
+  let cfgLoaded = false;         // 设置是否已从 IndexedDB 恢复
+  let voiceRetryTimer = null;    // 有界重试定时器
+  let voiceRetryLeft = MAX_VOICE_RETRY;
+  let warnedNoZh = false;        // 「无中文语音」提示每次会话只弹一次
 
   // 句子/词两个高亮的 Range 缓存（两套绘制通道共用）
   let sentRange = null;
@@ -69,6 +79,10 @@ const TTS = (() => {
     $('#btn-tts-close', () => stop());
 
     bindSliders();
+
+    // 设置改在 init 期恢复，不再留在 start() 里 —— 见 restoreCfg 注释：
+    // 恢复晚于 refreshVoices 会让「下拉框显示的声音 ≠ 实际朗读的声音」
+    cfgReady = restoreCfg().then(() => { cfgLoaded = true; });
   }
 
   /** $(id) + click 快捷方式 */
@@ -78,68 +92,245 @@ const TTS = (() => {
     return el;
   }
 
+  /** 数值显示：去掉多余小数位（1.00 → 1，1.25 → 1.25） */
+  const fmtNum = v => String(Math.round(v * 100) / 100);
+
+  /**
+   * 数值滑杆通用绑定：cfg 与读数即时更新，落盘与重启则防抖。
+   * 拖一次滑杆会连发几十个 input，若每个都写 IndexedDB 并重建播放队列，
+   * 手机会不停 cancel/speak，朗读明显发颤。
+   */
+  function bindSlider(id, valId, key, suffix) {
+    const input = document.getElementById(id);
+    const out = document.getElementById(valId);
+    if (!input) return;
+    let settle = null;
+    const commit = () => {
+      clearTimeout(settle);
+      settle = null;
+      saveCfg();
+      if (state === 'playing') softRestart(cur);   // 即时生效：保持进度位置
+    };
+    input.addEventListener('input', () => {
+      cfg[key] = Number(input.value);
+      if (out) out.textContent = fmtNum(cfg[key]) + suffix;
+      clearTimeout(settle);
+      settle = setTimeout(commit, 250);
+    });
+    input.addEventListener('change', commit);      // 松手立即生效，不等满防抖窗口
+  }
+
   function bindSliders() {
-    // 语速滑杆
-    const rateInput = document.getElementById('tts-rate');
-    const rateVal = document.getElementById('tts-rate-val');
-    if (rateInput) {
-      rateInput.addEventListener('input', () => {
-        cfg.rate = Number(rateInput.value);
-        if (rateVal) rateVal.textContent = cfg.rate.toFixed(2).replace(/0$/, '') + 'x';
-        saveCfg();
-        // 语速即时生效：重启当前块（保持进度位置）
-        if (state === 'playing') { const c = cur; softRestart(c); }
-      });
-    }
-    // 声音下拉框（异步填充）
-    const voiceSel = document.getElementById('tts-voice');
-    if (voiceSel) {
-      refreshVoices(voiceSel);
-      if (speechSynthesis.onvoiceschanged !== undefined) {
-        speechSynthesis.addEventListener('voiceschanged', () => refreshVoices(voiceSel));
+    bindSlider('tts-rate', 'tts-rate-val', 'rate', 'x');
+    bindSlider('tts-pitch', 'tts-pitch-val', 'pitch', '');
+
+    // —— 声音下拉框（异步填充：各平台就绪时机差异很大）——
+    voiceSel = document.getElementById('tts-voice');
+    if (voiceSel && 'speechSynthesis' in window) {
+      refreshVoices();
+      // 必须用包装函数：直接传 refreshVoices 会把事件对象当成 force 参数
+      if (typeof speechSynthesis.addEventListener === 'function') {
+        speechSynthesis.addEventListener('voiceschanged', () => refreshVoices());
+      } else if ('onvoiceschanged' in speechSynthesis) {
+        speechSynthesis.onvoiceschanged = () => refreshVoices();   // 老 WebView 只有属性形式
       }
       voiceSel.addEventListener('change', () => {
-        cfg.voiceURI = voiceSel.value;
+        const uri = voiceSel.value;
+        if (!uri) return;                       // 占位项，不是真实选择
+        cfg.voiceURI = uri;
         saveCfg();
-        if (state === 'playing') { softRestart(cur); }
+        if (state === 'playing') softRestart(cur);
       });
+      voiceSel.addEventListener('blur', () => {
+        if (voicePending) { voicePending = false; refreshVoices(true); }
+      });
+    }
+
+    // —— 设置面板「朗读声音」组：手动刷新 + 安装引导 ——
+    const refreshBtn = document.getElementById('btn-tts-refresh-voice');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        voiceRetryLeft = MAX_VOICE_RETRY;      // 手动刷新重置重试预算
+        refreshVoices(true);
+        ui.toast(speechSynthesis.getVoices().length
+          ? '声音列表已刷新' : '仍未读到声音，请确认系统已安装语音包', 3000);
+      });
+    }
+    // 打开设置面板时顺带刷一次：用户多半是刚从系统设置装完语音包回来
+    const settingsBtn = document.getElementById('btn-settings');
+    if (settingsBtn) settingsBtn.addEventListener('click', () => refreshVoices());
+    const helpBtn = document.getElementById('btn-tts-voice-help');
+    const helpBox = document.getElementById('tts-voice-help');
+    if (helpBtn && helpBox) {
+      helpBtn.addEventListener('click', () => helpBox.classList.toggle('hidden'));
     }
   }
 
-  function saveCfg() {
-    Storage.setSetting('tts', { rate: cfg.rate, voiceURI: cfg.voiceURI }).catch(() => {});
-  }
+  /* ------------------------------ 设置存取 ------------------------------ */
 
-  function restoreCfg() {
-    Storage.getSetting('tts', {}).then(saved => {
-      if (saved && saved.rate) cfg.rate = saved.rate;
-      if (saved && saved.voiceURI) cfg.voiceURI = saved.voiceURI;
-      const rateInput = document.getElementById('tts-rate');
-      const rateVal = document.getElementById('tts-rate-val');
-      if (rateInput) rateInput.value = cfg.rate;
-      if (rateVal) rateVal.textContent = cfg.rate + 'x';
+  // 注意：setSetting 是整体 put、没有 patch 合并 —— 新增字段必须同时改
+  // 这里的写入对象和 restoreCfg 的恢复分支，否则会被静默抹掉
+  function saveCfg() {
+    Storage.setSetting('tts', {
+      rate: cfg.rate, pitch: cfg.pitch, voiceURI: cfg.voiceURI,
     }).catch(() => {});
   }
 
-  /** 获取并填充声音列表；中文声音排在前面 */
-  function refreshVoices(select) {
+  /**
+   * 恢复朗读偏好并回写控件。必须在 init() 期跑完，不能留在 start() 里 ——
+   * 否则 start() 里那次异步读取会让首块先用默认语速/声音播出去。
+   */
+  function restoreCfg() {
+    return Storage.getSetting('tts', {}).then(saved => {
+      if (saved) {
+        if (saved.rate) cfg.rate = saved.rate;
+        if (saved.pitch) cfg.pitch = saved.pitch;
+        if (saved.voiceURI) cfg.voiceURI = saved.voiceURI;
+      }
+      syncCfgUI();
+      refreshVoices();     // 让下拉框选中项与恢复出来的 cfg 对齐
+    }).catch(() => {});
+  }
+
+  /** 把 cfg 回写到控制条与设置面板的控件（下拉框由 refreshVoices 同步） */
+  function syncCfgUI() {
+    const set = (id, val, outId, text) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val;
+      const out = outId && document.getElementById(outId);
+      if (out) out.textContent = text;
+    };
+    set('tts-rate', cfg.rate, 'tts-rate-val', fmtNum(cfg.rate) + 'x');
+    set('tts-pitch', cfg.pitch, 'tts-pitch-val', fmtNum(cfg.pitch));
+  }
+
+  /* ------------------------------ 声音列表 ------------------------------ */
+
+  /** 中文音色判定：部分国产引擎报 zh_CN 而非 zh-CN，故不写死连字符 */
+  const isZhVoice = v => /^zh([-_]|$)/i.test(v.lang || '');
+  /** 普通话（简）判定：zh-CN / zh_CN / zh-Hans-CN / zh-Hans；排除 zh-TW、zh-HK */
+  const isZhCNVoice = v => /^zh([-_](cn|hans))/i.test(v.lang || '') ||
+    /^zh$/i.test(v.lang || '');
+  const byVoiceName = (a, b) => (a.name || '').localeCompare(b.name || '');
+
+  let lastVoiceSig = '';     // 声音列表签名：内容没变就不重建 DOM
+  let voicePending = false;  // 焦点在原生选择器上时挂起的刷新
+
+  /**
+   * 实际要用的音色：用户选择优先，否则按「离线优先的普通话」兜底。
+   * 下拉框显示的值与 speakRange 实际使用的值都取自这里，
+   * 「看到的声音」与「读出来的声音」因此始终是同一个。
+   *
+   * 兜底刻意让 localService 优先：手机上网络合成的音色在语言包缺失时
+   * 可能静默回退成默认声音（听着像「选了中文却读英文」），离线音色更稳。
+   * 也用 isZhCNVoice 精确匹配，避免拿 zh-TW / zh-HK（粤语）去读简体正文。
+   */
+  function effectiveVoice() {
+    const voices = ('speechSynthesis' in window) ? speechSynthesis.getVoices() : [];
+    if (!voices.length) return null;
+    return voices.find(v => v.voiceURI === cfg.voiceURI) ||
+      voices.find(v => isZhCNVoice(v) && v.localService) ||
+      voices.find(isZhCNVoice) ||
+      voices.find(v => isZhVoice(v) && v.localService) ||
+      voices.find(isZhVoice) || null;
+  }
+
+  /**
+   * 填充声音列表。触发时机（全部幂等，靠签名去重）：
+   *   1) init 立即          —— 桌面浏览器此时通常已有值
+   *   2) voiceschanged      —— Chrome / Android 的异步就绪通知
+   *   3) 首次 u.onstart     —— iOS 在用户手势之前 getVoices() 恒为空，
+   *                            且 voiceschanged 不触发，只能靠开播这一手补上
+   *   4) 有界重试           —— 部分安卓引擎延迟就绪又不发事件
+   *   5) 手动「刷新声音列表」/ 打开设置面板
+   *
+   * 程序化赋 value 不派发 change 事件，所以朗读过程中刷新
+   * 不会误触发 softRestart 打断播放。
+   */
+  function refreshVoices(force) {
+    if (!voiceSel || !('speechSynthesis' in window)) return;
+    // 原生选择器开着时重建 option，会把用户正在点的那一项换掉
+    if (!force && document.activeElement === voiceSel) { voicePending = true; return; }
+
     const voices = speechSynthesis.getVoices();
-    if (!voices.length || !select) return;
-    const sorted = [...voices].sort((a, b) => {
-      const azh = /^zh/i.test(a.lang) ? 0 : 1, bzh = /^zh/i.test(b.lang) ? 0 : 1;
-      return azh - bzh || a.name.localeCompare(b.name);
-    });
-    select.innerHTML = '';
-    sorted.forEach(v => {
+    if (!voices.length) {
+      scheduleVoiceRetry();
+      if (voiceRetryLeft <= 0) setVoicePlaceholder('（未检测到系统语音）');
+      return;
+    }
+    stopVoiceRetry();
+
+    const zh = voices.filter(isZhVoice).sort(byVoiceName);
+    const other = voices.filter(v => !isZhVoice(v)).sort(byVoiceName);
+
+    // Chrome 会连发多次内容相同的 voiceschanged；不比对签名就会反复重建
+    // DOM，在安卓上还会顺手关掉用户正打开的原生选择列表
+    const sig = zh.concat(other).map(v => v.voiceURI).join('|');
+    if (sig !== lastVoiceSig) {
+      lastVoiceSig = sig;
+      const frag = document.createDocumentFragment();
+      if (zh.length) frag.appendChild(buildVoiceGroup('中文', zh));
+      if (other.length) frag.appendChild(buildVoiceGroup('其他语言', other));
+      voiceSel.replaceChildren(frag);   // 一次替换，不留「零 option」的中间帧
+    }
+
+    // 选中项只认 effectiveVoice()，绝不把兜底结果写回 cfg.voiceURI ——
+    // 否则桌面选好的声音一到手机就会被改写成手机的第一个音色，跨设备互相覆盖
+    const v = effectiveVoice();
+    voiceSel.value = v ? v.voiceURI : '';
+    updateVoiceStat(voices.length, zh.length);
+  }
+
+  /** 列表始终为空时，把占位项从「读取中」改成明确结论 */
+  function setVoicePlaceholder(text) {
+    if (!voiceSel) return;
+    const opt = voiceSel.options[0];
+    if (voiceSel.options.length === 1 && opt && opt.value === '') {
+      opt.textContent = text;
+    }
+  }
+
+  function buildVoiceGroup(label, list) {
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const v of list) {
       const opt = document.createElement('option');
       opt.value = v.voiceURI;
-      opt.textContent = `${v.name} (${v.lang})`;
-      if (v.voiceURI === cfg.voiceURI || (!cfg.voiceURI && /^zh-CN/i.test(v.lang))) {
-        opt.selected = true;
-        cfg.voiceURI = v.voiceURI;
-      }
-      select.appendChild(opt);
-    });
+      // 标出离线/联网：系统内置语音响应更稳，在线语音音质更好但依赖网络
+      opt.textContent = `${v.name} (${v.lang} · ${v.localService ? '离线' : '联网'})`;
+      group.appendChild(opt);
+    }
+    return group;
+  }
+
+  /** 设置面板里的统计文字；一个中文声音都没有时额外提示一次 */
+  function updateVoiceStat(total, zhCount) {
+    const stat = document.getElementById('tts-voice-stat');
+    if (stat) {
+      stat.textContent = zhCount
+        ? `检测到 ${total} 个声音，其中中文 ${zhCount} 个`
+        : `检测到 ${total} 个声音，但没有中文语音`;
+    }
+    // 只在朗读进行中提示：书架页刚加载就弹 TTS 的提示纯属噪音，
+    // 而用户点下朗读时正是他真正需要知道这件事的时刻
+    if (!zhCount && !warnedNoZh && state !== 'stopped') {
+      warnedNoZh = true;
+      try { ui.toast('未检测到中文语音，可在「⚙ 设置 → 朗读声音」查看如何安装', 3500); }
+      catch (e) { /* ui 未就绪时忽略 */ }
+    }
+  }
+
+  function scheduleVoiceRetry() {
+    if (voiceRetryTimer || voiceRetryLeft <= 0) return;
+    voiceRetryLeft--;
+    voiceRetryTimer = setTimeout(() => {
+      voiceRetryTimer = null;
+      refreshVoices();
+    }, 300);
+  }
+
+  function stopVoiceRetry() {
+    if (voiceRetryTimer) { clearTimeout(voiceRetryTimer); voiceRetryTimer = null; }
   }
 
   /* ------------------------ 正文建模：文本节点映射 ------------------------ */
@@ -363,7 +554,6 @@ const TTS = (() => {
     if (!('speechSynthesis' in window)) { alert('当前浏览器不支持语音合成'); return; }
     stop(false);
     buildModel();
-    restoreCfg();
 
     // 找到第一个结束位置超过起点的句子
     let idx = sentences.findIndex(s => s.end > startAbs);
@@ -371,8 +561,13 @@ const TTS = (() => {
     everSpoke = false;        // 新一轮朗读重置引擎可用性探测
     errBeforeStart = 0;
     state = 'playing';
-    showBar(true);
-    beginFrom(sentences[idx].start);
+    showBar(true);            // UI 立即可见，不等设置读完
+
+    // 设置已在 init() 期恢复，快路径下这里无需等待。冷启动万一还没读完就补一次
+    // then —— 仍落在 iOS 的用户激活窗口内（beginFrom 本身另有 30ms 延迟）
+    const go = () => { if (state === 'playing') beginFrom(sentences[idx].start); };
+    if (cfgLoaded || !cfgReady) go();
+    else cfgReady.then(go);
   }
 
   /* --------------------- 分块 + 预取缓冲的播放核心 --------------------- */
@@ -422,8 +617,8 @@ const TTS = (() => {
   function speakRange(st, en, ci) {
     const u = new SpeechSynthesisUtterance(plainText.slice(st, en));
     u.rate = cfg.rate;
-    u.pitch = 1;
-    const voice = pickVoice();
+    u.pitch = cfg.pitch;
+    const voice = effectiveVoice();
     if (voice) { u.voice = voice; u.lang = voice.lang; }
     else u.lang = 'zh-CN';
 
@@ -449,8 +644,12 @@ const TTS = (() => {
     // 开播成功：解除引擎不可用的快速失败判定
     u.onstart = () => {
       if (state === 'stopped') return;
+      const firstEver = !everSpoke;   // 先取快照：下面就要把它置真
       everSpoke = true;
       errBeforeStart = 0;
+      // iOS 的 getVoices() 在首次用户手势之前恒为空、且 voiceschanged 不触发，
+      // 只能靠开播这一手补上（内部有签名去重，重复调用几乎零成本）
+      if (firstEver) refreshVoices();
       // 立刻点亮本块第一句：即使引擎从不触发边界事件，句子层高亮
       // 也至少从开播这一刻起可见
       if (!boundaryFired) syncSentenceTo(st);
@@ -492,11 +691,32 @@ const TTS = (() => {
       if (ev.error === 'interrupted' || ev.error === 'canceled') return;
       console.warn('朗读出错:', ev.error);
       if (state !== 'playing') return;
+
+      // 分诊：这几类都不是「系统没装语音」，一律报成同一句话会把用户
+      // 引到完全错误的方向（跑去系统设置里翻语音包，越翻越少）
+      if (ev.error === 'not-allowed' || ev.error === 'audio-busy') {
+        stop();
+        ui.toast(ev.error === 'not-allowed'
+          ? '请先在页面上点一下，再开始朗读' : '音频被其他应用占用，请稍后再试', 3500);
+        return;
+      }
+      // 所选声音的语言包不可用（Chrome Android 常见）：清掉用户选择，
+      // 让 effectiveVoice() 的兜底链接管。cfg.voiceURI 置空后本分支不再命中，
+      // 天然只触发一次，不会形成重试环
+      if (ev.error === 'voice-unavailable' || ev.error === 'language-unavailable') {
+        if (cfg.voiceURI) {
+          cfg.voiceURI = '';
+          ui.toast('所选声音不可用，已切回系统默认中文声音', 3000);
+        }
+        finishUp();
+        return;
+      }
+
       // 尚未播出任何内容就连续失败 → 判定引擎不可用（如系统未装语音），
       // 快速终止而不是让缓冲机制把整本书逐块报错空转一遍
       if (!everSpoke && ++errBeforeStart >= 3) {
         stop();
-        alert('语音合成启动失败，请检查系统是否安装了可用的朗读语音。');
+        ui.toast('语音合成启动失败，请检查系统是否安装了可用的朗读语音。', 4000);
         return;
       }
       finishUp();
@@ -542,13 +762,6 @@ const TTS = (() => {
     paint();
   }
 
-  function pickVoice() {
-    const voices = speechSynthesis.getVoices();
-    if (!voices.length) return null;
-    return voices.find(v => v.voiceURI === cfg.voiceURI) ||
-           voices.find(v => /^zh-CN/i.test(v.lang)) ||
-           voices.find(v => /^zh/i.test(v.lang)) || null;
-  }
 
   /** 让正在朗读的位置进入可视区（温和滚动，不打断朗读） */
   function followVisible(abs) {
@@ -621,11 +834,12 @@ const TTS = (() => {
     beginFrom(sentences[target].start);
   }
 
-  /** 改语速/换声音后的平滑重启：保持原句位置接着播 */
+  /** 改语速/音调/换声音后的平滑重启：保持原句位置接着播 */
   function softRestart(idx) {
-    const si = Math.max(0, idx);
-    if (!sentences.length) return;
-    beginFrom(sentences[si].start);
+    // idx < 0 表示首块尚未 onstart、cur 还没落定 —— 此时若照旧 clamp 到 0，
+    // 会把正在开播的书整个弹回第一句
+    if (!sentences.length || idx < 0) return;
+    beginFrom(sentences[Math.min(idx, sentences.length - 1)].start);
   }
 
   function finishAll() {
