@@ -9,7 +9,9 @@
 node_modules/
 package.json
 package-lock.json
-scripts/.e2e-*.png
+# 测试脚本产出的截图/临时件一律用「点号前缀」，整体忽略；
+# 只列 .e2e-*.png 的话，新加一个脚本就会漏一个进仓库
+scripts/.*
 
 # 个人文档（不入库）
 ReadMe.txt
